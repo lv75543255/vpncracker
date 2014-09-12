@@ -3,13 +3,17 @@
 #include <stdlib.h>
 #include <time.h>
 #include <assert.h>
+#include <string.h>
 #if defined(__MINGW32__) || defined(__MINGW64__)
 #include <winsock2.h>
 #define s_addr S_un.S_addr
 #define gettimeofday mingw_gettimeofday
 #else
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
+
 #define SOCKET int
 #define closesocket(s) close(s)
 #endif
@@ -27,7 +31,7 @@ typedef struct UdpHeader{
 
 typedef struct UdpPacket{
     UdpHeader header;
-    uint8_t data[65535];
+	uint8_t data[UDP_PACKSIZE_MAX -sizeof(UdpHeader)];
 }UdpPacket;
 
 typedef struct UdpPair{
@@ -78,15 +82,6 @@ static inline void sockaddr_get(struct sockaddr_in *addr,uint32_t *phost,uint16_
     *phost = addr->sin_addr.s_addr;
 }
 
-void UdpHeader_encrypto(UdpPacket *thiz,struct sockaddr_in *addr)
-{
-
-}
-
-void UdpHeader_decrypto(UdpPacket *thiz)
-{
-
-}
 
 UdpPairArray *UdpPairArray_new(int capacity)
 {
@@ -149,13 +144,18 @@ inline UdpPair *UdpPairArray_findByFlag(UdpPairArray *thiz,uint32_t host,uint16_
     int i;
     const int count = thiz->count;
     UdpPair *array = thiz->array;
+	printf("[%s:%d] count = %d, %x:%x!\n",__FUNCTION__,__LINE__,count,host,port);
+
     for (i = 0;i < count; ++i)
     {
+		printf("[%s:%d] find %x:%x\n",__FUNCTION__,__LINE__,array[i].flag_host,array[i].flag_port);
+
         if (array[i].flag_port == port && array[i].flag_host == host)
         {
             return array + i;
         }
     }
+	printf("[%s:%d] not find %x:%x\n",__FUNCTION__,__LINE__,host,port);
     return NULL;
 }
 
@@ -231,45 +231,63 @@ struct UdpRepeator{
     UdpPairArray *udppairs;
 
     void (*processTimer)(UdpPairArray *thiz,int mseconds);
-    void (*sendToLeft)(SOCKET sock,void *packet,char *buffer,int size,struct sockaddr_in *addr);
-    void (*sendToRight)(SOCKET sock,void *packet,char *buffer,int size,struct sockaddr_in *addr);
-    UdpPair* (*propareTransfer)(UdpPairArray * udppairs,struct sockaddr_in *addr, char *buffer);
+	void (*sendToLeft)(SOCKET sock,void *packet,char *buffer,int size,struct sockaddr_in *here,struct sockaddr_in *there);
+	void (*sendToRight)(SOCKET sock,void *packet,char *buffer,int size,struct sockaddr_in *here,struct sockaddr_in *there);
+	UdpPair* (*propareTransfer)(UdpPairArray * udppairs,struct sockaddr_in *addr, void *buffer);
 
     SOCKET sock;
     struct sockaddr_in target_addr;
 };
 
-void encrypto_send(SOCKET sock,void *head,char *buffer,int size,struct sockaddr_in *addr)
+void encrypto_send_local(SOCKET sock,void *head,char *buffer,int size,struct sockaddr_in *here,struct sockaddr_in *there)
 {
+	printf("[%s:%d] %s to %x:%x!\n",__FUNCTION__,__LINE__,buffer,there->sin_addr.s_addr,there->sin_port);
+
     UdpPacket *packet =(UdpPacket *) head;
     packet->header.random = rand() % 0x100;
-    packet->header.port = addr->sin_port;
-    packet->header.host = addr->sin_addr.s_addr;
+	packet->header.port = here->sin_port;
+	packet->header.host = here->sin_addr.s_addr;
 
-    sendto(sock,packet,sizeof(packet->header) + size ,0,(struct sockaddr *)addr,sizeof(*addr));
+	sendto(sock,packet, size + sizeof(packet->header) ,0,(struct sockaddr *)there,sizeof(*there));
 }
 
-void decrypto_send(SOCKET sock,void *head,char *buffer,int size,struct sockaddr_in *addr)
+void encrypto_send_remote(SOCKET sock,void *head,char *buffer,int size,struct sockaddr_in *here,struct sockaddr_in *there)
+{
+	printf("[%s:%d] %s to %x:%x!\n",__FUNCTION__,__LINE__,buffer,there->sin_addr.s_addr,there->sin_port);
+
+	UdpPacket *packet =(UdpPacket *) head;
+	packet->header.random = rand() % 0x100;
+	packet->header.port = rand() % 0x100;
+	packet->header.host = rand();
+
+	sendto(sock,packet, size + sizeof(packet->header) ,0,(struct sockaddr *)there,sizeof(*there));
+}
+void decrypto_send(SOCKET sock,void *head,char *buffer,int size,struct sockaddr_in *here,struct sockaddr_in *there)
 {
     UdpPacket *packet =(UdpPacket *) buffer;
-    sendto(sock,packet->data,size - sizeof(packet->header) ,0,(struct sockaddr *)addr,sizeof(*addr));
+	printf("[%s:%d] %s!\n",__FUNCTION__,__LINE__,packet->data);
+
+	sendto(sock,packet->data,size - sizeof(packet->header) ,0,(struct sockaddr *)there,sizeof(*there));
 }
 
-UdpPair *UdpRepeator_prepareTansfer_remote(UdpPairArray * udppairs,struct sockaddr_in *addr, char *buffer)
+UdpPair *UdpRepeator_prepareTansfer_remote(UdpPairArray * udppairs,struct sockaddr_in *addr, void *buffer)
 {
     UdpPacket *packet =(UdpPacket *) buffer;
     UdpPair * pair = UdpPairArray_findByFlag(udppairs,packet->header.host,packet->header.port);
     if(pair == NULL)
     {
-        printf("[%s:%d] new one!\n",__FUNCTION__,__LINE__);
+		printf("[%s:%d] start, new one %x:%x!\n",__FUNCTION__,__LINE__,packet->header.host,packet->header.port);
         UdpPair temp;
         temp.timerin = 0;
         temp.timerout = 0;
         temp.sock = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
         temp.flag_host = packet->header.host;
-        temp.flag_host = packet->header.port;
-        memcpy(&temp.addr,addr,sizeof(*addr));
-        pair = UdpPairArray_append(udppairs,&temp);
+		temp.flag_port = packet->header.port;
+
+		memcpy(&temp.addr,addr,sizeof(*addr));
+		pair = UdpPairArray_append(udppairs,&temp);
+		printf("[%s:%d] end, new one %x:%x!\n",__FUNCTION__,__LINE__,pair->flag_host,pair->flag_port);
+
     }
     else
     {
@@ -279,7 +297,7 @@ UdpPair *UdpRepeator_prepareTansfer_remote(UdpPairArray * udppairs,struct sockad
     return pair;
 }
 
-UdpPair *UdpRepeator_prepareTansfer_local(UdpPairArray * udppairs,struct sockaddr_in *addr, char *buffer)
+UdpPair *UdpRepeator_prepareTansfer_local(UdpPairArray * udppairs,struct sockaddr_in *addr, void *buffer)
 {
     UdpPair * pair = UdpPairArray_findByAddr(udppairs,addr);
     if(pair == NULL)
@@ -351,15 +369,15 @@ UdpRepeator * UdpRepeator_new(int mode,const char *right_host,uint16_t right_por
     if(mode)
     {
         thiz->processTimer = UdpPairArray_processTimer_remote;
-        thiz->sendToLeft = decrypto_send;
-        thiz->sendToRight = encrypto_send;
+		thiz->sendToLeft = decrypto_send;
+		thiz->sendToRight = encrypto_send_remote;
         thiz->propareTransfer = UdpRepeator_prepareTansfer_remote;
     }
     else
     {
         thiz->processTimer = UdpPairArray_processTimer_local;
-        thiz->sendToLeft = encrypto_send;
-        thiz->sendToRight = decrypto_send;
+		thiz->sendToLeft = encrypto_send_local;
+		thiz->sendToRight = decrypto_send;
         thiz->propareTransfer = UdpRepeator_prepareTansfer_local;
     }
 
@@ -414,10 +432,10 @@ int UdpRepeator_process_reightin(UdpRepeator* thiz,int ready,fd_set *prfds)
         nbytes = recvfrom(thiz->sock,&packet.data,sizeof(packet.data),0,(struct sockaddr *)&addr,&addr_len);
         if(nbytes > 0)
         {
-            printf("message %d:%s\n",nbytes,packet.data);
+			printf("message --> %d:%s\n",nbytes,packet.data);
             UdpPair * pair = thiz->propareTransfer(thiz->udppairs,&addr,&packet.data);
             pair->timerin = 0;
-            thiz->sendToLeft(pair->sock,&packet,&packet.data,nbytes,&thiz->target_addr);
+			thiz->sendToLeft(pair->sock,&packet,&packet.data,nbytes,&addr,&thiz->target_addr);
         }
 
         --ready;
@@ -438,20 +456,16 @@ int UdpRepeator_process_leftin(UdpRepeator* thiz,int ready,fd_set *prfds)
     {
         if(ready > 0 )
         {
-            printf("[%s:%d] right %d@%s:%d\n",__FUNCTION__,__LINE__,array[i].sock,inet_ntoa(array[i].addr.sin_addr),htons(array[i].addr.sin_port));
+			printf("[%s:%d] <-- %d@%s:%d\n",__FUNCTION__,__LINE__,array[i].sock,inet_ntoa(array[i].addr.sin_addr),htons(array[i].addr.sin_port));
             if(FD_ISSET(array[i].sock,prfds))
             {
                 int     nbytes;
                 UdpPacket packet;
-                // recive data form 1,so we don't care addr
                 nbytes = recvfrom(array[i].sock,packet.data,sizeof(packet.data),0,NULL,NULL);
                 if(nbytes > 0)
                 {
-                    int                 addr_len;
-                    addr_len = sizeof(array[i].addr);
-                    printf("[%s:%d] right send\n",__FUNCTION__,__LINE__);
                     array[i].timerout = 0;
-                    thiz->sendToRight(thiz->sock,&packet,&packet.data,nbytes,&(array[i].addr));
+					thiz->sendToRight(thiz->sock,&packet,&packet.data,nbytes,NULL,&(array[i].addr));
                 }
 
                 --ready;
