@@ -20,8 +20,8 @@
 
 #define UDP_PACKSIZE_MAX 65535
 #define UDP_CONECTION_PAIR_MAX 64
-#define UDP_TIMEROUT_MSECONDS 10 * 1000
-#define UDP_RECONNECT_MSECONDS 4 * 1000
+#define UDP_TIMEROUT_MSECONDS 60 * 1000
+#define UDP_RECONNECT_MSECONDS 5 * 1000
 
 typedef struct UdpHeader{
     uint16_t random;
@@ -241,7 +241,7 @@ struct UdpRepeator{
 
 void encrypto_send_local(SOCKET sock,void *head,char *buffer,int size,struct sockaddr_in *here,struct sockaddr_in *there)
 {
-	printf("[%s:%d] %s to %x:%x!\n",__FUNCTION__,__LINE__,buffer,there->sin_addr.s_addr,there->sin_port);
+	printf("[%s:%d] to %x:%x!\n",__FUNCTION__,__LINE__,there->sin_addr.s_addr,there->sin_port);
 
     UdpPacket *packet =(UdpPacket *) head;
     packet->header.random = rand() % 0x100;
@@ -253,7 +253,7 @@ void encrypto_send_local(SOCKET sock,void *head,char *buffer,int size,struct soc
 
 void encrypto_send_remote(SOCKET sock,void *head,char *buffer,int size,struct sockaddr_in *here,struct sockaddr_in *there)
 {
-	printf("[%s:%d] %s to %x:%x!\n",__FUNCTION__,__LINE__,buffer,there->sin_addr.s_addr,there->sin_port);
+	printf("[%s:%d] to %x:%x!\n",__FUNCTION__,__LINE__,there->sin_addr.s_addr,there->sin_port);
 
 	UdpPacket *packet =(UdpPacket *) head;
 	packet->header.random = rand() % 0x100;
@@ -289,9 +289,15 @@ UdpPair *UdpRepeator_prepareTansfer_remote(UdpPairArray * udppairs,struct sockad
 		printf("[%s:%d] end, new one %x:%x!\n",__FUNCTION__,__LINE__,pair->flag_host,pair->flag_port);
 
     }
-    else
+	else
     {
-        printf("[%s:%d] find one!\n",__FUNCTION__,__LINE__);
+		//
+		printf("[%s:%d] find one!\n",__FUNCTION__,__LINE__);
+		if(sockaddr_cmp(&pair->addr,addr) != 0)
+		{
+			printf("[%s:%d] find one,you change addr %s:%d!\n",__FUNCTION__,__LINE__,inet_ntoa(addr->sin_addr),htons(addr->sin_port));
+			memcpy(&pair->addr,addr,sizeof(*addr));
+		}
     }
 
     return pair;
@@ -328,7 +334,7 @@ UdpRepeator * UdpRepeator_new(int mode,const char *right_host,uint16_t right_por
     WSAStartup(MAKEWORD(2,2),&wsaData);
 #endif
     srand(time(NULL));
-    printf("[%s:%d] start %d\n",__FUNCTION__,__LINE__,sizeof(struct sockaddr_in));
+	printf("[%s:%d] start %s:%d -> %s:%d\n",__FUNCTION__,__LINE__,right_host,right_port,left_host,left_port);
 
     thiz = (UdpRepeator *)malloc(sizeof(UdpRepeator));
     if(thiz == NULL)
@@ -432,10 +438,13 @@ int UdpRepeator_process_reightin(UdpRepeator* thiz,int ready,fd_set *prfds)
         nbytes = recvfrom(thiz->sock,&packet.data,sizeof(packet.data),0,(struct sockaddr *)&addr,&addr_len);
         if(nbytes > 0)
         {
-			printf("message --> %d:%s\n",nbytes,packet.data);
+//			printf("message --> %d:%s\n",nbytes,packet.data);
             UdpPair * pair = thiz->propareTransfer(thiz->udppairs,&addr,&packet.data);
-            pair->timerin = 0;
-			thiz->sendToLeft(pair->sock,&packet,&packet.data,nbytes,&addr,&thiz->target_addr);
+			if(pair)
+			{
+				pair->timerin = 0;
+				thiz->sendToLeft(pair->sock,&packet,&packet.data,nbytes,&addr,&thiz->target_addr);
+			}
         }
 
         --ready;
@@ -456,7 +465,7 @@ int UdpRepeator_process_leftin(UdpRepeator* thiz,int ready,fd_set *prfds)
     {
         if(ready > 0 )
         {
-			printf("[%s:%d] <-- %d@%s:%d\n",__FUNCTION__,__LINE__,array[i].sock,inet_ntoa(array[i].addr.sin_addr),htons(array[i].addr.sin_port));
+//			printf("[%s:%d] <-- %d@%s:%d\n",__FUNCTION__,__LINE__,array[i].sock,inet_ntoa(array[i].addr.sin_addr),htons(array[i].addr.sin_port));
             if(FD_ISSET(array[i].sock,prfds))
             {
                 int     nbytes;
