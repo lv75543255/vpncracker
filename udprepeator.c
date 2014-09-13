@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <assert.h>
 #if defined(__MINGW32__) || defined(__MINGW64__)
 #include <winsock2.h>
 #define s_addr S_un.S_addr
@@ -17,8 +18,9 @@
 #define UDP_CONECTION_PAIR_MAX 64
 #define MAX_MSECONDS 60 * 1000
 typedef struct UdpPair{
-    int32_t sock;
+    SOCKET sock;
     uint16_t timer;
+    uint16_t timerout;
     struct sockaddr_in  addr;
 }UdpPair;
 
@@ -98,7 +100,7 @@ UdpPair *UdpPairArray_append(UdpPairArray *thiz,UdpPair *pair)
 }
 
 
-UdpPair *UdpPairArray_findBySock(UdpPairArray *thiz,int32_t fd)
+UdpPair *UdpPairArray_findBySock(UdpPairArray *thiz,SOCKET fd)
 {
     int i;
     int count = thiz->count;
@@ -162,106 +164,6 @@ void UdpPairArray_processTimer(UdpPairArray *thiz,int mseconds)
 }
 
 
-int prepare_fdsets(int server,fd_set *rfds,UdpPairArray *udppairs)
-{
-    int maxfd = server;
-    int i;
-    int count = udppairs->count;
-    UdpPair *array = udppairs->array;
-    for(i = 0;i < count; ++i)
-    {
-        FD_SET(array[i].sock,rfds);
-        if(array[i].sock > maxfd )
-        {
-            maxfd = array[i].sock;
-        }
-    }
-
-    return maxfd + 1;
-}
-
-int process_user_reightin(int ready,int server,fd_set rfds,UdpPairArray *udppairs)
-{
-    char buf[65536];
-    memset(&buf,0,sizeof(buf));
-    if(FD_ISSET(server,&rfds))
-    {
-        struct sockaddr_in  addr;
-        int                 addr_len;
-        int                 nbytes;
-        char                buf[0xff];
-        addr_len = sizeof(addr);
-        memset(&addr,0,sizeof(addr));
-        nbytes = recvfrom(server,buf,sizeof(buf),0,(struct sockaddr *)&addr,&addr_len);
-        if(nbytes > 0)
-        {
-            printf("--------------\n");
-            printf("server  error!");
-            printf("--------------\n");
-
-            UdpPair * pair = UdpPairArray_findByAddr(udppairs,&addr);
-            if(pair == NULL)
-            {
-                UdpPair temp;
-                temp.timer = 0;
-                temp.sock = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
-                memcpy(&temp.addr,&addr,sizeof(addr));
-
-                pair = UdpPairArray_append(udppairs,&temp);
-            }
-            else
-            {
-
-            }
-
-//            sendto(pair->port,buf,);
-        }
-        else
-        {
-            printf("================= %s\n",buf);
-            //find then to send 1
-        }
-
-        --ready;
-    }
-
-    return ready;
-}
-
-int process_user_leftin(int ready,int server,fd_set rfds,UdpPairArray *udppairs)
-{
-    int i;
-    int count = udppairs->count;
-    UdpPair *array = udppairs->array;
-    for(i = 0;i < count; ++i)
-    {
-        if(ready > 0 )
-        {
-            if(FD_ISSET(array[i].sock,&rfds))
-            {
-                int     nbytes;
-                char    buf[0xff];
-                // recive data form 1,so we don't care addr
-                nbytes = recvfrom(array[i].sock,buf,sizeof(buf),0,NULL,NULL);
-                if(nbytes > 0)
-                {
-                    int                 addr_len;
-                    addr_len = sizeof(array[i].addr);
-                    sendto(server,buf,nbytes,0,(struct sockaddr *)&(array[i].addr),addr_len);
-                }
-
-                --ready;
-            }
-        }
-        else
-        {
-            break;
-        }
-
-    }
-
-    return 0;
-}
 
 struct UdpRepeator{
     UdpPairArray *udppairs;
@@ -333,6 +235,115 @@ void UdpRepeator_destroy(UdpRepeator *thiz)
 
 
 
+
+
+
+int UdpRepeator_prepare_fdsets(UdpRepeator* thiz,fd_set *rfds)
+{
+    assert(thiz != NULL);
+    int maxfd = thiz->sock;
+    const int count = thiz->udppairs->count;
+    UdpPair *array = thiz->udppairs->array;
+    int i;
+    for(i = 0;i < count; ++i)
+    {
+        FD_SET(array[i].sock,rfds);
+        if(array[i].sock > maxfd )
+        {
+            maxfd = array[i].sock;
+        }
+    }
+
+    return maxfd;
+}
+
+int UdpRepeator_process_reightin(UdpRepeator* thiz,int ready,fd_set *prfds)
+{
+    assert(thiz != NULL);
+    char buf[65536];
+    memset(&buf,0,sizeof(buf));
+    if(FD_ISSET(thiz->sock,prfds))
+    {
+        struct sockaddr_in  addr;
+        int                 addr_len;
+        int                 nbytes;
+        char                buf[0xff];
+        addr_len = sizeof(addr);
+        memset(&addr,0,sizeof(addr));
+        nbytes = recvfrom(thiz->sock,buf,sizeof(buf),0,(struct sockaddr *)&addr,&addr_len);
+        if(nbytes > 0)
+        {
+            printf("--------------\n");
+            printf("server  error!");
+            printf("--------------\n");
+
+            UdpPair * pair = UdpPairArray_findByAddr(thiz->udppairs,&addr);
+            if(pair == NULL)
+            {
+                UdpPair temp;
+                temp.timer = 0;
+                temp.sock = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
+                memcpy(&temp.addr,&addr,sizeof(addr));
+
+                pair = UdpPairArray_append(thiz->udppairs,&temp);
+            }
+            else
+            {
+
+            }
+
+            sendto(pair->sock,buf,nbytes,0,(struct sockaddr *)&thiz->target_addr,sizeof(thiz->target_addr));
+        }
+        else
+        {
+            printf("================= %s\n",buf);
+            //find then to send 1
+        }
+
+        --ready;
+    }
+
+    return ready;
+}
+
+int UdpRepeator_process_leftin(UdpRepeator* thiz,int ready,fd_set *prfds)
+{
+    assert(thiz != NULL);
+
+    int i;
+    int count = thiz->udppairs->count;
+    UdpPair *array = thiz->udppairs->array;
+
+    for(i = 0;i < count; ++i)
+    {
+        if(ready > 0 )
+        {
+            if(FD_ISSET(array[i].sock,prfds))
+            {
+                int     nbytes;
+                char    buf[0xff];
+                // recive data form 1,so we don't care addr
+                nbytes = recvfrom(array[i].sock,buf,sizeof(buf),0,NULL,NULL);
+                if(nbytes > 0)
+                {
+                    int                 addr_len;
+                    addr_len = sizeof(array[i].addr);
+                    sendto(thiz->sock,buf,nbytes,0,(struct sockaddr *)&(array[i].addr),addr_len);
+                }
+
+                --ready;
+            }
+        }
+        else
+        {
+            break;
+        }
+
+    }
+
+    return 0;
+}
+
 int UdpRepeator_exec(UdpRepeator *thiz)
 {
     int ready;
@@ -353,16 +364,16 @@ int UdpRepeator_exec(UdpRepeator *thiz)
         time_out.tv_sec = 1;
         time_out.tv_usec = 0;
         begin_timer = gettimeofday_atmsecond();
-        maxfd = prepare_fdsets(server,&rfds,udppairs);
+        maxfd = UdpRepeator_prepare_fdsets(thiz,&rfds);
         ready = select(maxfd,&rfds,NULL,NULL,&time_out);
         if(ready > 0)
         {
             //N --> 1
-            ready = process_user_reightin(ready,server,rfds,udppairs);
+            ready = UdpRepeator_process_reightin(thiz,ready,&rfds);
             //N <-- 1
             if(ready > 0)
             {
-                process_user_leftin(ready,server,rfds,udppairs);
+                UdpRepeator_process_leftin(thiz,ready,&rfds);
             }
         }
         else if(ready < 0)
@@ -379,5 +390,3 @@ int UdpRepeator_exec(UdpRepeator *thiz)
     }
     return 0;
 }
-
-
