@@ -9,9 +9,10 @@ QT       -= core gui
 TARGET = repeator
 CONFIG   += console
 CONFIG   -= app_bundle
-LIBS = -lwsock32
 TEMPLATE = app
-
+windows{
+LIBS = -lwsock32
+}
 
 SOURCES += \
     main.c \

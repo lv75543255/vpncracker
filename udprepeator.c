@@ -1,8 +1,18 @@
 #include "udprepeator.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <winsock2.h>
 #include <time.h>
+#if defined(__MINGW32__) || defined(__MINGW64__)
+#include <winsock2.h>
+#define s_addr S_un.S_addr
+#define gettimeofday mingw_gettimeofday
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#define SOCKET int
+#define closesocket(s) close(s)
+#endif
+
 #define UDP_PACKSIZE_MAX 65535
 #define UDP_CONECTION_PAIR_MAX 64
 #define MAX_MSECONDS 60 * 1000
@@ -21,7 +31,7 @@ typedef struct UdpPairArray{
 static inline int gettimeofday_atmsecond()
 {
     struct timeval tv = {0,0};
-    mingw_gettimeofday(&tv,NULL);
+    gettimeofday(&tv,NULL);
     return tv.tv_sec*1000 + tv.tv_usec /1000;
 }
 
@@ -29,7 +39,7 @@ static inline int sockaddr_cmp(const struct sockaddr_in *addr,const struct socka
 {
     if((addr->sin_family == that->sin_family)
             &&(addr->sin_port == that->sin_port)
-            &&(addr->sin_addr.S_un.S_addr == that->sin_addr.S_un.S_addr))
+            &&(addr->sin_addr.s_addr == that->sin_addr.s_addr))
     {
         return 0;
     }
@@ -42,13 +52,13 @@ static inline void sockaddr_set(struct sockaddr_in *addr,uint32_t host,uint16_t 
     memset(addr,0,sizeof(*addr));
     addr->sin_family = AF_INET;
     addr->sin_port = port;
-    addr->sin_addr.S_un.S_addr = host;
+    addr->sin_addr.s_addr = host;
 }
 
 static inline void sockaddr_get(struct sockaddr_in *addr,uint32_t *phost,uint16_t *pport)
 {
     *pport = addr->sin_port;
-    *phost = addr->sin_addr.S_un.S_addr;
+    *phost = addr->sin_addr.s_addr;
 }
 
 UdpPairArray *UdpPairArray_new(int capacity)
@@ -170,7 +180,7 @@ int prepare_fdsets(int server,fd_set *rfds,UdpPairArray *udppairs)
     return maxfd + 1;
 }
 
-int process_user_reightin(int ready,int server,fd_set *rfds,UdpPairArray *udppairs)
+int process_user_reightin(int ready,int server,fd_set rfds,UdpPairArray *udppairs)
 {
     char buf[65536];
     memset(&buf,0,sizeof(buf));
@@ -218,7 +228,7 @@ int process_user_reightin(int ready,int server,fd_set *rfds,UdpPairArray *udppai
     return ready;
 }
 
-int process_user_leftin(int ready,int server,fd_set *rfds,UdpPairArray *udppairs)
+int process_user_leftin(int ready,int server,fd_set rfds,UdpPairArray *udppairs)
 {
     int i;
     int count = udppairs->count;
@@ -263,9 +273,11 @@ UdpRepeator * UdpRepeator_new(const char *host,uint16_t port)
 {
     UdpRepeator *       thiz;
     struct sockaddr_in  saddr;
-
+#if defined(__MINGW32__) || defined(__MINGW64__)
     WSADATA             wsaData;
     WSAStartup(MAKEWORD(2,2),&wsaData);
+#endif
+    printf("[%s:%d] start %d\n",__FUNCTION__,__LINE__,sizeof(struct sockaddr_in));
 
     thiz = (UdpRepeator *)malloc(sizeof(UdpRepeator));
     if(thiz == NULL)
@@ -293,15 +305,11 @@ UdpRepeator * UdpRepeator_new(const char *host,uint16_t port)
         return NULL;
     }
 
-    memset(&saddr,0,sizeof(saddr));
-    saddr.sin_family=AF_INET;
-    saddr.sin_port=htons(port);
-    saddr.sin_addr.S_un.S_addr=inet_addr(host);
-
+    sockaddr_set(&saddr,inet_addr(host),port);
     if(bind(thiz->sock,(struct sockaddr *)&saddr,sizeof(saddr)) != 0)
     {
         printf("[%s:%d] Error bind() failed\n",__FUNCTION__,__LINE__);
-
+        perror("what?");
         UdpPairArray_destroy(thiz->udppairs);
         closesocket(thiz->sock);
         free(thiz);
@@ -317,7 +325,9 @@ void UdpRepeator_destroy(UdpRepeator *thiz)
     {
         closesocket(thiz->sock);
         free(thiz);
+#if defined(__MINGW32__) || defined(__MINGW64__)
         WSACleanup();
+#endif
     }
 }
 
@@ -329,7 +339,7 @@ int UdpRepeator_exec(UdpRepeator *thiz)
     int maxfd;
     int begin_timer;
     int end_timer;
-    SOCKET *server;
+    SOCKET server;
     UdpPairArray *udppairs;
     fd_set rfds;
     struct timeval time_out;;
@@ -348,11 +358,11 @@ int UdpRepeator_exec(UdpRepeator *thiz)
         if(ready > 0)
         {
             //N --> 1
-            ready = process_user_reightin(ready,server,&rfds,udppairs);
+            ready = process_user_reightin(ready,server,rfds,udppairs);
             //N <-- 1
             if(ready > 0)
             {
-                process_user_leftin(ready,server,&rfds,udppairs);
+                process_user_leftin(ready,server,rfds,udppairs);
             }
         }
         else if(ready < 0)
