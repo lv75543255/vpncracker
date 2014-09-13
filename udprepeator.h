@@ -9,7 +9,7 @@ typedef struct UdpRepeator UdpRepeator;
  * @param port
  * @return
  */
-UdpRepeator * UdpRepeator_new(const char *host,uint16_t port);
+UdpRepeator * UdpRepeator_new(int mode,const char *right_host,uint16_t right_port,const char *left_host,uint16_t left_port);
 /**
  * @brief UdpRepeator_destroy
  * @param thiz
