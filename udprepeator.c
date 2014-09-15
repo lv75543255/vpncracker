@@ -15,10 +15,10 @@
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-
 #define SOCKET int
 #define closesocket(s) close(s)
 #endif
+
 #define UNUSED(x) (void)x;
 #define UDP_PACKSIZE_MAX 65535
 #define UDP_CONECTION_PAIR_MAX 128
@@ -118,27 +118,14 @@ static inline void sockaddr_get(struct sockaddr_in *addr,uint32_t *phost,uint16_
 }
 
 
-UdpPairArray *UdpPairArray_new(int capacity)
-{
-    UdpPairArray *thiz;
-    thiz = (UdpPairArray*)malloc(sizeof(UdpPairArray) + sizeof(UdpPair) * capacity);
-    if(thiz != NULL)
-    {
+static void UdpPairArray_init(UdpPairArray *thiz,int capacity)
+{ 
         thiz->count = 0;
         thiz->capacity = capacity;
         memset(thiz->array,0,sizeof(UdpPair) * capacity);
-    }
-
-    return thiz;
 }
 
-
-void UdpPairArray_destroy(UdpPairArray *thiz)
-{
-    free(thiz);
-}
-
-UdpPair *UdpPairArray_append(UdpPairArray *thiz,UdpPair *pair)
+static UdpPair *UdpPairArray_append(UdpPairArray *thiz,UdpPair *pair)
 {
     UdpPair *temp = NULL;
 
@@ -196,8 +183,6 @@ inline UdpPair *UdpPairArray_findByFlag(UdpPairArray *thiz,uint32_t host,uint16_
 
 
 struct UdpRepeator{
-    UdpPairArray *udppairs;
-
     void (*processTimer)(UdpRepeator *thiz,int mseconds);
     void (*sendToLeft)(UdpRepeator *thiz,SOCKET sock,void *packet,void *buffer,int size,struct sockaddr_in *here,struct sockaddr_in *there);
     void (*sendToRight)(UdpRepeator *thiz,SOCKET sock,void *packet,void *buffer,int size,struct sockaddr_in *here,struct sockaddr_in *there);
@@ -206,6 +191,7 @@ struct UdpRepeator{
     SOCKET sock;
     struct sockaddr_in source_addr;
     struct sockaddr_in target_addr;
+	UdpPairArray udppairs;
 };
 
 //远端模式（根据超时情况，清理端口）
@@ -214,7 +200,7 @@ static void UdpRepeator_processTimer_remote(UdpRepeator *thiz,int mseconds)
 
     int i = 0;
     int j = 0;
-    UdpPairArray *udppairs = thiz->udppairs;
+	UdpPairArray *udppairs = &thiz->udppairs;
     const int count = udppairs->count;
     UdpPair *array = udppairs->array;
 
@@ -245,7 +231,7 @@ static void UdpRepeator_processTimer_local(UdpRepeator *thiz,int mseconds)
 
     int i = 0;
     int j = 0;
-    UdpPairArray *udppairs = thiz->udppairs;
+	UdpPairArray *udppairs = &thiz->udppairs;
     const int count = udppairs->count;
     UdpPair *array = udppairs->array;
 
@@ -418,21 +404,15 @@ UdpRepeator * UdpRepeator_new()
 #endif
     srand(time(NULL));
 
-    thiz = (UdpRepeator *)malloc(sizeof(UdpRepeator));
-    if(thiz == NULL)
+	thiz = (UdpRepeator *)malloc(sizeof(UdpRepeator)+sizeof(UdpPairArray) + sizeof(UdpPair) * UDP_CONECTION_PAIR_MAX);
+	if(thiz != NULL)
     {
+		UdpPairArray_init(&thiz->udppairs,UDP_CONECTION_PAIR_MAX);
+    }
+	else
+	{
 		hError("[%s:%d] Error malloc of UdpRepeator failed\n",__FUNCTION__,__LINE__);
-        return NULL;
-    }
-
-    memset(thiz,0,sizeof(*thiz));
-    thiz->udppairs = UdpPairArray_new(UDP_CONECTION_PAIR_MAX);
-    if(thiz->udppairs == NULL)
-    {
-		hError("[%s:%d] Error new of UdpPairArray failed\n",__FUNCTION__,__LINE__);
-        free(thiz);
-        return NULL;
-    }
+	}
 
     return thiz;
 }
@@ -478,11 +458,6 @@ void UdpRepeator_destroy(UdpRepeator *thiz)
             closesocket(thiz->sock);
         }
 
-        if(thiz->udppairs != NULL)
-        {
-            UdpPairArray_destroy(thiz->udppairs);
-        }
-
         free(thiz);
 #if defined(__MINGW32__) || defined(__MINGW64__)
         WSACleanup();
@@ -495,8 +470,8 @@ static int UdpRepeator_prepare_fdsets(UdpRepeator* thiz,fd_set *rfds)
 {
     assert(thiz != NULL);
     int maxfd = thiz->sock;
-    const int count = thiz->udppairs->count;
-    UdpPair *array = thiz->udppairs->array;
+	const int count = thiz->udppairs.count;
+	UdpPair *array = thiz->udppairs.array;
     int i;
     for(i = 0;i < count; ++i)
     {
@@ -526,7 +501,7 @@ static int UdpRepeator_process_reightin(UdpRepeator* thiz,int ready,fd_set *prfd
         if(nbytes > 0)
         {
 //			hDebug("message --> %d:%s\n",nbytes,packet.data);
-            UdpPair * pair = thiz->propareTransfer(thiz->udppairs,&addr,&packet.data);
+			UdpPair * pair = thiz->propareTransfer(&thiz->udppairs,&addr,&packet.data);
             if(pair)
             {
                 pair->timerin = 0;
@@ -545,8 +520,8 @@ static int UdpRepeator_process_leftin(UdpRepeator* thiz,int ready,fd_set *prfds)
     assert(thiz != NULL);
 
     int i;
-    int count = thiz->udppairs->count;
-    UdpPair *array = thiz->udppairs->array;
+	int count = thiz->udppairs.count;
+	UdpPair *array = thiz->udppairs.array;
 
     for(i = 0;i < count; ++i)
     {
@@ -628,7 +603,7 @@ int UdpRepeator_exec(UdpRepeator *thiz)
 		begin_timer = 0;
 		end_timer = 0;
         server = thiz->sock;
-        udppairs = thiz->udppairs;
+		udppairs = &thiz->udppairs;
 
         for(;;)
         {
