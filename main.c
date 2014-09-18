@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <stdbool.h>
 #include "udprepeator.h"
 
 int util_parse_arguments(UdpRepeator *repeator,int argc,char *argv[]);
@@ -18,9 +19,9 @@ int main(int argc,char *argv[])
     return ret;
 }
 
-int util_read_settings(UdpRepeator *repeator)
+int util_read_settings(UdpRepeator *repeator,const char *file)
 {
-	FILE *pf = fopen("config.ini","rw");
+	FILE *pf = fopen(file,"rw");
 	if(pf != NULL)
 	{
 		int ret;
@@ -79,9 +80,9 @@ int util_read_settings(UdpRepeator *repeator)
 }
 
 //TODO
-int util_save_settings(UdpRepeator *repeator)
+int util_save_settings(UdpRepeator *repeator,const char *file)
 {
-	FILE *pf = fopen("config.ini","rw");
+	FILE *pf = fopen(file,"rw");
 	if(pf != NULL)
 	{
 
@@ -98,87 +99,100 @@ int util_save_settings(UdpRepeator *repeator)
 //TODO
 int util_parse_arguments(UdpRepeator *repeator, int argc, char *argv[])
 {
-//	int ret;
-//	char * short_options = "s:l:t:c:d";
-//	struct option long_options[] = {
-//	{ "source", required_argument, NULL, 's' },
-//	{ "dest", required_argument, NULL, 'd' },
-//	{ "timeout", required_argument, NULL, 't' },
-//	{ "config", no_argument, NULL, 'c' },
-//	{ "debug", no_argument, NULL, 'g' },
-//	{ 0, 0, 0, 0},
-//	};
+	int ret = 0;
+	bool need_default_config = true;
+	char * short_options = "s:l:t:c:d";
+	struct option long_options[] = {
+	{ "source", required_argument, NULL, 's' },
+	{ "dest", required_argument, NULL, 'd' },
+	{ "timeout", required_argument, NULL, 't' },
+	{ "config", no_argument, NULL, 'c' },
+	{ "debug", no_argument, NULL, 'g' },
+	{ 0, 0, 0, 0},
+	};
 
-//	for(;;)
-//	{
-//		int c;
-//		c = getopt_long (argc, argv, short_options, long_options, NULL);
-//		if(c != -1 )
-//		{
-//			switch(c)
-//			{
-//			case 'l':
-//			{
-//				int in_port;
-//				int out_port;
-//				printf("left %s",optarg);
-//				int addr[4];
-//				ret = sscanf(optarg,"%d.%d.%d.%d:%d@%d",addr,addr+1,addr+2,addr+3,&in_port,&out_port);
-//				if(ret == 1)
-//				{
-//					out_port = in_port;
-//				}
-
-//				printf("ret =%d,%d@%d\n",ret,in_port,out_port);
-//			}
-//				break;
-//			case 'r':
-//			{
-//				int in_port;
-//				int out_port;
-//				printf("right %s",optarg);
-
-//				ret = sscanf(optarg,"%d@%d",&in_port,&out_port);
-//				if(ret == 1)
-//				{
-//					out_port = in_port;
-//				}
-
-//				printf("ret =%d,%d@%d\n",ret,in_port,out_port);
-//			}
-//				break;
-//			case 't':
-//				printf("timeout %s\n",optarg);
-//				break;
-//			case 'c':
-//				printf("timeout %s\n",optarg);
-//				break;
-//			case 'd':
-//				printf("start with debug mode\n");
-//				UdpRepeator_setDebug(1);
-//				break;
-//			case '?':
-//			default:
-//				printf("usage:%s [-f filename] [-n] testdata\n", argv[0]);
-//				getchar();
-//				return -1;
-//			}
-//		}
-//		else
-//		{
-//			break;
-//		}
-//	}
-
-	printf("load settings(./config.ini)\n");
-	if(util_read_settings(repeator) == 0)
+	for(;;)
 	{
-		return 0;
+		int c;
+		c = getopt_long (argc, argv, short_options, long_options, NULL);
+		if(c != -1 )
+		{
+			switch(c)
+			{
+			case 'l':
+			{
+				int count;
+				int in_port;
+				int out_port;
+				printf("left %s",optarg);
+				int addr[4];
+				count = sscanf(optarg,"%d.%d.%d.%d:%d@%d",addr,addr+1,addr+2,addr+3,&in_port,&out_port);
+				if(count == 1)
+				{
+					out_port = in_port;
+				}
+
+				printf("ret =%d,%d@%d\n",count,in_port,out_port);
+			}
+				break;
+			case 'r':
+			{
+				int count;
+				int in_port;
+				int out_port;
+				printf("right %s",optarg);
+
+				count = sscanf(optarg,"%d@%d",&in_port,&out_port);
+				if(ret == 1)
+				{
+					out_port = in_port;
+				}
+
+				printf("ret =%d,%d@%d\n",count,in_port,out_port);
+			}
+				break;
+			case 't':
+				printf("timeout %s\n",optarg);
+				break;
+			case 'c':
+				printf("user config = %s\n",optarg);
+				if(util_read_settings(repeator,optarg) != 0)
+				{
+					return -1;
+				}
+				break;
+			case 'd':
+				printf("start with debug mode\n");
+				UdpRepeator_setDebug(1);
+				break;
+			case '?':
+			default:
+				printf("usage:%s [-f filename] [-n] testdata\n", argv[0]);
+				getchar();
+				return -1;
+			}
+		}
+		else
+		{
+			break;
+		}
 	}
 
+	if (need_default_config)
+	{
+		printf("load settings(./config.ini)\n");
+		ret = util_read_settings(repeator,"config.ini");
 
+		if(ret != 0)
+		{
+			util_save_settings(repeator,"config.ini");
+		}
+	}
+
+	return ret;
 }
 
+//TODO
 int util_help_useage(char *path)
 {
 
