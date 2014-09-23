@@ -281,20 +281,38 @@ static void UdpRepeator_processTimer_local(UdpRepeator *thiz,int mseconds)
 static inline void encrypto_method(void *data,int size)
 {
 	int i;
+	unsigned char temp;
 	unsigned char* buffer = (unsigned char*)data;
-	for (i  = 0; i < size; i+=2)
+	const int count = size - 3;
+	for (i  = 0; i < count; i += 4)
 	{
-		buffer[i] = ~buffer[i];
+		temp = buffer[i];
+		buffer[i] = temp << 5 | temp >> 3;
+
+		temp = buffer[i+1];
+		buffer[i+1] = buffer[i+2];
+		buffer[i+2] = temp;
+
+		buffer[i+3] = ~buffer[i+3];
 	}
 }
 
 static inline void decrypto_method(void *data,int size)
 {
 	int i;
+	unsigned char temp;
 	unsigned char* buffer = (unsigned char*)data;
-	for (i  = 0; i < size; i+=2)
+	const int count = size - 3;
+	for (i  = 0; i < count; i += 4)
 	{
-		buffer[i] = ~buffer[i];
+		temp = buffer[i];
+		buffer[i] = temp >> 5 | temp << 3;
+
+		temp = buffer[i+1];
+		buffer[i+1] = buffer[i+2];
+		buffer[i+2] = temp;
+
+		buffer[i+3] = ~buffer[i+3];
 	}
 }
 
@@ -315,7 +333,7 @@ static void UdpRepeator_encrypto_send(UdpRepeator *thiz,SOCKET sock,void *head,v
         packet->header.host = rand();
     }
 
-	encrypto_method(buffer,size);
+	encrypto_method(packet,size + sizeof(packet->header));
 
     sendto(sock,packet, size + sizeof(packet->header) ,0,(struct sockaddr *)there,sizeof(*there));
 }
@@ -326,10 +344,10 @@ static void UdpRepeator_decrypto_send_remote(UdpRepeator *thiz,SOCKET sock,void 
     UdpPacket *packet =(UdpPacket *) buffer;
 
     hDebug("[%s:%d] to %x:%d\n",__FUNCTION__,__LINE__,there->sin_addr.s_addr,htons(there->sin_port));
+	decrypto_method(packet,size);
 
     if(size - sizeof(packet->header) > 0)
     {
-		decrypto_method(packet->data,size - sizeof(packet->header));
         sendto(sock,packet->data,size - sizeof(packet->header) ,0,(struct sockaddr *)there,sizeof(*there));
     }
     else
@@ -338,7 +356,7 @@ static void UdpRepeator_decrypto_send_remote(UdpRepeator *thiz,SOCKET sock,void 
         header.random = rand() % 0x100;
         header.port = rand() % 0x100;
         header.host = rand();
-
+		encrypto_method(&header,sizeof(header));
         sendto(thiz->sock,&header,sizeof(header) ,0,(struct sockaddr *)here,sizeof(*here));
         hDebug("[%s:%d] heart beat process,%x:%d\n",__FUNCTION__,__LINE__,here->sin_addr.s_addr,htons(here->sin_port));
     }
@@ -352,10 +370,9 @@ static void UdpRepeator_decrypto_send_local(UdpRepeator *thiz,SOCKET sock,void *
     UdpPacket *packet =(UdpPacket *) buffer;
 
     hDebug("[%s:%d] to %x:%p\n",__FUNCTION__,__LINE__,there->sin_addr.s_addr,htons(there->sin_port));
-
+	decrypto_method(packet,size);
     if(size - sizeof(packet->header) > 0)
     {
-		decrypto_method(packet->data,size - sizeof(packet->header));
         sendto(sock,packet->data,size - sizeof(packet->header) ,0,(struct sockaddr *)there,sizeof(*there));
     }
     else
